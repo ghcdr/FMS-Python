@@ -5,7 +5,6 @@ import argparse
 import sys
 
 
-
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--sim", metavar="SIM", default="chain", help="Simulation scene")
@@ -21,6 +20,8 @@ def main():
         #parser.print_help()
         print(e)
         sys.exit(1)
+    except: # exiting from panda3d main
+        sys.exit(0)
        
 if __name__ == '__main__':
     main()

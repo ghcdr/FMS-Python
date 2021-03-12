@@ -7,6 +7,11 @@ import sys
 
 class Renderer(ShowBase):
     "Specialized renderer for mass-spring systems"
+
+    dt = None   # Frame delta time
+    sim = None  # Simulator instance
+    mesh = None # MeshDrawer
+
     def __init__(self, simulator, primitive = 'lines'):
         ShowBase.__init__(self)
         self.primitive = primitive
@@ -27,7 +32,7 @@ class Renderer(ShowBase):
         if primitive == 'lines': taskMgr.add(self.wireframe_draw, "sim_draw")
         # Enable simulation stepping
         self.dt = 0.0
-        #taskMgr.add(self.updateSim, "sim_update")
+        taskMgr.add(self.updateSim, "sim_update")
 
     def updateSim(self, task):
         "Task for stepping the simulator forward"

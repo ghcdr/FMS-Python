@@ -1,6 +1,8 @@
 import numpy as np
+from copy import copy
 from scipy.sparse.csc import csc_matrix
 from scipy.sparse import kron, identity, diags
+from scipy.sparse.linalg import factorized
 
 
 spring_type = [('p1', int), ('p2', int), ('k', float), ('r', int)]
@@ -25,11 +27,12 @@ class Solver:
     J       = None  # Some other matrix (eq. 12)
     L       = None  # The Laplacian
     A       = None  # 'A' as in 'Ax=b', in the problem of global step
+    LS      = None  # Linear system to solve
     b       = None  # 'b' in the same context 
     springs = None  # Spring storage as a list of 'spring_type' (defined above)
     fext    = None  # Per particle external forces (accelerations, at first, converted then to forces).
     g       = None  # Acceleration of gravity, which is also converted to force afterwards 
-    dt      = 1.0 / 60.0 # Timestep 
+    dt      = 1.0 / 30.0 # Timestep 
     dt2     = dt ** 2.0
 
     def __init__(self, positions, masses, springs):
@@ -37,11 +40,12 @@ class Solver:
         self.g = vector3(0.0, -9.8, 0.0)
         self.m = len(positions)
         self.s = len(springs)
-        self.q0 = self.q = np.array(positions)
+        self.q0 = np.array(positions).reshape(self.ndim * self.m, 1)
+        self.q = copy(self.q0)
         self.M = kron(diags(masses), np.eye(self.ndim), format='csc')
         self.Minv = kron(diags(list(map(lambda x : 0 if x==0 else 1.0/x, masses))), np.eye(self.ndim), format='csc')
         self.springs = np.array(springs, dtype=spring_type)
-        self.d = np.empty((self.q0.shape[1] * self.s, 1))
+        self.d = np.empty((self.ndim * self.s, 1))
         # Matrices L and J setup
         self.L = csc_matrix((self.m, self.m))
         self.J = csc_matrix((self.m, self.s))
@@ -53,38 +57,46 @@ class Solver:
         self.J = kron(self.J, np.eye(self.ndim), format='csc')
         # Matrix A precomputation (Global step)
         self.A = self.M + self.dt2 * self.L
+        self.LS = factorized(self.A)
         # Initialize external forces
-        self.fext = np.zeros((self.m, self.ndim))
+        self.fext = np.zeros((self.ndim * self.m, 1))
 
     def __del__(self):
         pass
 
     def __local(self):
         "Local step: minimization of eq. 14 w.r.t. d"
-        tmp = self.springs[:]['p1'] - self.springs[:]['p2']
-        for d in tmp: d /= np.linalg.norm(d)
-        self.d = tmp
+        positions = self.q.reshape(self.m, self.ndim)
+        tmp = positions[self.springs[:]['p1']] - positions[self.springs[:]['p2']]
+        for d in tmp: 
+            d = d / np.linalg.norm(d)
+        self.d = tmp.reshape(self.ndim * self.s, 1)
 
     def __global(self):
         "Global step: minimization of eq. 14 w.r.t. x"
+        self.q0 = copy(self.q)
+        self.q = self.LS(self.b)
+        print(self.q)
         
     def getParticles(self, const=None):
         "Returns particles' positions"
         if(const == None): return q
         else:
             l = []
-            for x in self.q: l.append(const(tuple(x)))
+            for x in self.q.reshape(self.m, self.ndim): 
+                l.append(const(tuple(x)))
             return l
 
     def getSprings(self, const=None):
         "Return springs' endpoints positions"
         l = []
+        positions = self.q.reshape(self.m, self.ndim)
         for s in self.springs:
-            if const == None: l.append([self.q[s['p1']], self.q[s['p2']]])
-            else: l.append([const(tuple(self.q[s['p1']])), const(tuple(self.q[s['p2']]))])
+            if const == None: l.append([positions[s['p1']], positions[s['p2']]])
+            else: l.append([const(tuple(positions[s['p1']])), const(tuple(positions[s['p2']]))])
         return l
 
-    def dt(self, val):
+    def set_dt(self, val):
         "Update dt, dt2, and recompute A = M + h^2L"
         self.dt = val
         self.dt2 = val ** 2.0
@@ -92,14 +104,14 @@ class Solver:
 
     def apply_forces(self, acc):
         "Actually, acceleration"
-        self.fext = acc
+        self.fext = np.array(acc).reshape(self.ndim * self.m, 1)
 
-    def step(self, max_iterations=1, max_error=0.001):
+    def step(self, max_iterations=100, max_error=0.001):
         "Advance simulation by one step"
         # Compute resulting external forces
-        self.fext = (self.fext + self.g) * self.M
+        self.fext = self.M * (self.fext.reshape(self.m, self.ndim) + self.g).reshape(self.ndim * self.m, 1)
         # Advance one time step
-        self.b = self.dt2 * self.J *self.d + (self.q - self.q0) * self.M + self.dt2 * self.fext
+        self.b = self.dt2 * self.J * self.d + self.M * (self.q - self.q0) + self.dt2 * self.fext
         # Solve implicit integration
         for _ in range(0, max_iterations):
             self.solve()

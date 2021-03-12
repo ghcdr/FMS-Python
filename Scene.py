@@ -2,7 +2,8 @@ from Solver import vector3, spring, Solver
 import numpy as np
 
 
-def makeChain(p=vector3(0,0,0), v=vector3(2,0,0), n=4, k=0.7):
+def makeChain(p=vector3(0,0,0), v=vector3(2,0,0), n=4, k=0.2):
+    "Chain constructor"
     positions = []
     masses = []
     springs = []
