@@ -11,18 +11,24 @@ def main():
     parser.add_argument("--draw", metavar="DRAW", default="wireframe", help="Draw type")
     args = parser.parse_args()
     try:
-        if(args.sim not in Scene):
-            raise ValueError("Not a valid simulation")
-        param = Scene[args.sim]()
+        newScene = Scene()
+        if args.sim not in newScene.sceneOpt:
+            raise ValueError("Not a valid constructor. ")
+        newScene.sceneOpt[args.sim]()
+        param = newScene.getState0()
         solver = Solver(param['positions'], param['masses'], param['springs'])
-        app = Renderer(solver)
+        app = Renderer(solver, newScene.getObjects())
         app.run()
+    except ValueError as e:
+        print(e, "Valid options are: ")
+        print("interactive", *newScene.sceneOpt, sep=", ")
+        sys.exit(0)
     except Exception as e:
         print(e)
-        sys.exit(1)
+        sys.exit(1) 
     except: 
         # exiting from panda3d main, as it always throws
         sys.exit(0)
-       
+     
 if __name__ == '__main__':
     main()

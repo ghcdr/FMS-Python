@@ -5,17 +5,19 @@ import sys
 
 
 class Renderer(ShowBase):
-    "Specialized renderer for mass-spring systems"
-
+    """Specialized renderer for mass-spring systems"""
     dt = 0.0   # Frame delta time
     sim = None  # Simulator instance
-    mesh = MeshDrawer() # MeshDrawer
+    mesh = MeshDrawer()
+    objects = None
 
-    def __init__(self, simulator):
+    def __init__(self, simulator, objects):
         ShowBase.__init__(self)
         props = WindowProperties()
         props.setTitle('FMS')
         base.win.requestProperties(props)
+        # State setup
+        self.objects = objects
         self.sim = simulator
         # Keys
         self.accept("escape", sys.exit)
@@ -35,32 +37,48 @@ class Renderer(ShowBase):
         r.setTwoSided(True)
         r.setBin("fixed", 0)
         r.setLightOff(True)
-        # Register drawing callback
-        taskMgr.add(self.wireframe_draw, "sim_draw")
+        # Register drawing callbacks
+        #taskMgr.add(self.drawTriangles, "drawTriangles")
+        #taskMgr.add(self.drawParticles, "drawParticles")
+        taskMgr.add(self.drawSprings, "draw_springs")
         # Enable simulation stepping
-        taskMgr.add(self.updateSim, "sim_update")
+        #taskMgr.add(self.updateSim, "updateSim")
 
     def updateSim(self, task):
         "Task for stepping the simulator forward"
+        self.mesh.particle(Vec3(0,0,0), Vec4(random(), random(), random(),1), .7, Vec4(0.7,0,0.9,1), 0)
         self.dt += globalClock.getFrameTime()
         if(self.dt >= self.sim.dt):
             self.sim.step()
             self.dt = 0.0
         return task.cont # signals the task should be called over again
 
-    def wireframe_draw(self, task):
-        "Task for drawing the wireframe"
-        self.mesh.begin(base.cam, render)
-        #for p in self.sim.getParticles(Vec3):
-        #    self.mesh.particle(Vec3(p), Vec4(random(),random(),random(),1), .7, Vec4(0.7,0,0.9,1), 0)
-        for s in self.sim.getSprings(Vec3):
-            self.mesh.segment(Vec3(s[0]), Vec3(s[1]), Vec4(random(),random(),random(),1), .1,  Vec4(0.0,0.0,0.0,1))
-        # special case draw
-        p  = self.sim.getParticles(Vec3)
-        width = 5
-        for a in range(0, 4):
-            for b in range(0, 4):
-                i = a * width + b
-                self.mesh.tri(p[i], Vec4(0.7,0,0.9,1), Vec2(0,0), p[i + 1], Vec4(0.7,0,0.9,1), Vec2(0,0), p[i + width], Vec4(0.7,0,0.9,1), Vec2(0,0))
-                self.mesh.tri(p[i + 1], Vec4(0.7,0,0.9,1), Vec2(0,0), p[i + width + 1], Vec4(0.7,0,0.9,1), Vec2(0,0), p[i + width],Vec4(0.7,0,0.9,1), Vec2(0,0))
-        return task.cont # signals the task should be called over again
+    def drawTriangles(self, task):
+        p = self.sim.getParticles()
+        for obj in self.objects:
+            if obj.dim != 2: continue
+            for T in obj.indices:
+                tcolor = Vec4(obj.tcolor)
+                self.mesh.tri(Vec3(tuple(p[T[0]])), tcolor, Vec2(0, 0), Vec3(tuple(p[T[1]])), tcolor, Vec2(0, 0), Vec3(tuple(p[T[2]])), tcolor, Vec2(0, 0))
+        return task.cont
+
+    def drawParticles(self, task):
+        p = self.sim.getParticles()
+        for obj in self.objects:
+            pcolor = Vec4(obj.pcolor)
+            for i in range(obj.beg, obj.end):  
+                self.mesh.particle(Vec3(tuple(p[i])), Vec4(random(), random(), random(),1), .7, Vec4(0.7,0,0.9,1), 0)
+        return task.cont
+
+    def drawSprings(self, task):
+        p = self.sim.getParticles()
+        for obj in self.objects:
+            for I in obj.indices:
+                scolor = Vec4(obj.scolor)
+                if obj.dim == 1:
+                    self.mesh.segment(Vec3(tuple(p[I[0]])), Vec3(tuple(p[I[1]])), Vec4(random(), random(), random(), 1), .1, scolor)
+                if obj.dim == 2:
+                    self.mesh.segment(Vec3(tuple(p[I[0]])), Vec3(tuple(p[I[1]])), Vec4(random(), random(), random(), 1), .1, scolor)
+                    self.mesh.segment(Vec3(tuple(p[I[1]])), Vec3(tuple(p[I[2]])), Vec4(random(), random(), random(), 1), .1, scolor)
+                    self.mesh.segment(Vec3(tuple(p[I[0]])), Vec3(tuple(p[I[2]])), Vec4(random(), random(), random(), 1), .1, scolor)
+        return task.cont

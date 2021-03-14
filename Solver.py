@@ -3,7 +3,7 @@ from copy import copy
 from scipy.sparse.csc import csc_matrix
 from scipy.sparse import kron, identity, diags
 from scipy.sparse.linalg import factorized
-from scipy.linalg import cholesky, solve
+from scipy.linalg import cholesky, cho_factor, cho_solve, solve
 
 
 spring_type = [('p1', int), ('p2', int), ('k', float), ('r', int)]
@@ -30,6 +30,7 @@ class Solver:
     A       = None  # 'A' as in 'Ax=b', in the problem of global step
     Ma      = None  # Inertial term
     LS      = None  # Linear system to solve
+    Ch      = None  # Cholesky factorization of 'A'
     b       = None  # 'b' in the same context 
     springs = None  # Spring storage as a list of 'spring_type' (defined above)
     fext    = None  # Per particle external forces (accelerations, at first, converted then to forces).
@@ -59,11 +60,11 @@ class Solver:
         self.J = kron(self.J, np.eye(self.ndim), format='csc')
         # Matrix A precomputation (Global step)
         self.A = self.M + self.dt2 * self.L
-        self.LS = factorized(self.A)
-        #try:
-        #    self.LS = cholesky(self.A.toarray())
-        #except LinAlgError as e:
-        #    print("Cholesky failed: ", e)
+        #self.LS = factorized(self.A)
+        try:
+            self.Ch = cho_factor(self.A.toarray())
+        except LinAlgError as e:
+            print("Cholesky failed: ", e)
         # Initialize external forces
         self.fext = np.zeros((self.ndim * self.m, 1))
 
@@ -82,28 +83,16 @@ class Solver:
     def __global(self):
         "Global step: minimization of eq. 14 w.r.t. x"
         self.b = self.dt2 * self.J * self.d + self.Ma + self.dt2 * self.fext
-        self.q = self.LS(self.b)
-        #self.q = solve(self.LS, self.b)
+        #self.q = self.LS(self.b)
+        # Using Cholesky
+        self.q = cho_solve(self.Ch, self.b)
+        # Manually fixing cloth corners
         self.q.reshape(self.m, self.ndim)[24] = self.q0.reshape(self.m, self.ndim)[24]
         self.q.reshape(self.m, self.ndim)[4] = self.q0.reshape(self.m, self.ndim)[4]
         
-    def getParticles(self, const=None):
+    def getParticles(self):
         "Returns particles' positions"
-        if(const == None): return q
-        else:
-            l = []
-            for x in self.q.reshape(self.m, self.ndim): 
-                l.append(const(tuple(x)))
-            return l
-
-    def getSprings(self, const=None):
-        "Return springs' endpoints positions"
-        l = []
-        positions = self.q.reshape(self.m, self.ndim)
-        for s in self.springs:
-            if const == None: l.append([positions[s['p1']], positions[s['p2']]])
-            else: l.append([const(tuple(positions[s['p1']])), const(tuple(positions[s['p2']]))])
-        return l
+        return self.q.reshape(self.m, self.ndim)
 
     def set_dt(self, val):
         "Update dt, dt2, and recompute A = M + h^2L"
