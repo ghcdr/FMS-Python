@@ -3,6 +3,7 @@ from copy import copy
 from scipy.sparse.csc import csc_matrix
 from scipy.sparse import kron, identity, diags
 from scipy.sparse.linalg import factorized
+from scipy.linalg import cholesky, solve
 
 
 spring_type = [('p1', int), ('p2', int), ('k', float), ('r', int)]
@@ -27,12 +28,13 @@ class Solver:
     J       = None  # Some other matrix (eq. 12)
     L       = None  # The Laplacian
     A       = None  # 'A' as in 'Ax=b', in the problem of global step
+    Ma      = None  # Inertial term
     LS      = None  # Linear system to solve
     b       = None  # 'b' in the same context 
     springs = None  # Spring storage as a list of 'spring_type' (defined above)
     fext    = None  # Per particle external forces (accelerations, at first, converted then to forces).
     g       = None  # Acceleration of gravity, which is also converted to force afterwards 
-    dt      = 1.0 / 30.0 # Timestep 
+    dt      = 1.0 / 60.0 # Timestep 
     dt2     = dt ** 2.0
 
     def __init__(self, positions, masses, springs):
@@ -52,12 +54,16 @@ class Solver:
         for idx, s in enumerate(self.springs):
             Ai = csc_matrix(([1, -1],([s['p1'], s['p2']], [0, 0])), shape=(self.m, 1))
             self.L += s['k'] * Ai * Ai.transpose()
-            self.J += s['k'] * Ai * csc_matrix(([1], ([idx], [0])), shape=(self.s, 1)).transpose()
+            self.J += s['k'] * Ai * csc_matrix(([1.0], ([idx], [0])), shape=(self.s, 1)).transpose()
         self.L = kron(self.L, np.eye(self.ndim), format='csc')
         self.J = kron(self.J, np.eye(self.ndim), format='csc')
         # Matrix A precomputation (Global step)
         self.A = self.M + self.dt2 * self.L
         self.LS = factorized(self.A)
+        #try:
+        #    self.LS = cholesky(self.A.toarray())
+        #except LinAlgError as e:
+        #    print("Cholesky failed: ", e)
         # Initialize external forces
         self.fext = np.zeros((self.ndim * self.m, 1))
 
@@ -67,16 +73,19 @@ class Solver:
     def __local(self):
         "Local step: minimization of eq. 14 w.r.t. d"
         positions = self.q.reshape(self.m, self.ndim)
-        tmp = positions[self.springs[:]['p1']] - positions[self.springs[:]['p2']]
-        for d in tmp: 
-            d = d / np.linalg.norm(d)
-        self.d = tmp.reshape(self.ndim * self.s, 1)
+        for i, s in enumerate(self.springs):
+            d = positions[s['p1']] - positions[s['p2']]
+            length = np.linalg.norm(d)
+            d = s['r'] * (vector3(0, 0, 0) if length == 0.0 else (d / length))
+            self.d.reshape(self.s, self.ndim)[i] = d
 
     def __global(self):
         "Global step: minimization of eq. 14 w.r.t. x"
-        self.q0 = copy(self.q)
+        self.b = self.dt2 * self.J * self.d + self.Ma + self.dt2 * self.fext
         self.q = self.LS(self.b)
-        print(self.q)
+        #self.q = solve(self.LS, self.b)
+        self.q.reshape(self.m, self.ndim)[24] = self.q0.reshape(self.m, self.ndim)[24]
+        self.q.reshape(self.m, self.ndim)[4] = self.q0.reshape(self.m, self.ndim)[4]
         
     def getParticles(self, const=None):
         "Returns particles' positions"
@@ -106,12 +115,13 @@ class Solver:
         "Actually, acceleration"
         self.fext = np.array(acc).reshape(self.ndim * self.m, 1)
 
-    def step(self, max_iterations=100, max_error=0.001):
+    def step(self, max_iterations=5, max_error=0.001):
         "Advance simulation by one step"
         # Compute resulting external forces
         self.fext = self.M * (self.fext.reshape(self.m, self.ndim) + self.g).reshape(self.ndim * self.m, 1)
-        # Advance one time step
-        self.b = self.dt2 * self.J * self.d + self.M * (self.q - self.q0) + self.dt2 * self.fext
+        # The inertial term
+        self.Ma = self.M * (2.0 * self.q - self.q0)
+        self.q0 = copy(self.q)
         # Solve implicit integration
         for _ in range(0, max_iterations):
             self.solve()
