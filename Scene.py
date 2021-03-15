@@ -73,7 +73,7 @@ class Scene:
         positions = self.state0['positions']
         masses = self.state0['masses']
         springs = self.state0['springs']
-        obj = Object(1, len(self.state0['masses']), len(self.state0['masses']) + n - 1)
+        obj = Object(1, len(self.state0['masses']), len(self.state0['masses']) + n)
         indices = []
         for i in range(0, n):
             positions.append(p + i * v)
@@ -83,7 +83,7 @@ class Scene:
                 obj.addIdx((i, i + 1))
         self.objects.append(obj)
 
-    def makeCloth(self, p=vector3(-4,0,0), v=vector3(5,0,0), width=5, height=5, k=0.9, mass=0.05):
+    def makeCloth(self, p=vector3(0,0,0), v=vector3(5,0,0), width=5, height=5, k=0.9, mass=0.05):
         """
         Cloth constructor.
         P: first corner
@@ -97,7 +97,7 @@ class Scene:
         masses = self.state0['masses']
         springs = self.state0['springs']
         indices = []
-        obj = Object(2, len(self.state0['masses']), len(self.state0['masses']) + width * height - 1)
+        obj = Object(2, len(self.state0['masses']), len(self.state0['masses']) + width * height)
         skip = np.linalg.norm(p) * vector3(0, -1, 0)
         for i in range(0, height):
             for j in range(0, width):
