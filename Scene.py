@@ -24,14 +24,14 @@ class Object:
         self.dim = dim
         self.beg = ini
         self.end = fin
-        # Colors
+        # Colors of segments, particles, and triangles
         self.scolor = (random(), random(), random(), 1.0)
         self.pcolor = (random(), random(), random(), 1.0)
         self.tcolor = (random(), random(), random(), 1.0)
 
     def addIdx(self, idx):
         if len(idx) != self.dim + 1:
-            raise str(self.dim + 1) + " indices expected"
+            raise Error(str(self.dim + 1) + " indices expected")
         self.indices.append(idx)
 
     def getIndices(self):
@@ -42,7 +42,7 @@ class Scene:
     """Encapsulates objects being simulated and drawn."""
 
     objects = []
-    state0 = { 'positions': [], 'masses': [], 'springs': [] }
+    state0 = { 'positions': [], 'masses': [], 'springs': [], 'fixed': set() }
     # 'Scene' constructors
     sceneOpt = {}
 
@@ -61,7 +61,7 @@ class Scene:
     def getState0(self):
         return self.state0
 
-    def makeChain(self, p=vector3(-4,0,0), v=vector3(5,0,0), n=3, k=0.9, mass=0.05):
+    def makeChain(self, p=vector3(-8,0,0), v=vector3(4,0,0), n=5, k=0.9, mass=0.05):
         """
         Chain constructor.
         p: beginning position
@@ -73,6 +73,7 @@ class Scene:
         positions = self.state0['positions']
         masses = self.state0['masses']
         springs = self.state0['springs']
+        fixed = self.state0['fixed']
         obj = Object(1, len(self.state0['masses']), len(self.state0['masses']) + n)
         indices = []
         for i in range(0, n):
@@ -81,6 +82,11 @@ class Scene:
             if i < n - 1: 
                 springs.append(spring(i, i + 1, k, np.linalg.norm(v)))
                 obj.addIdx((i, i + 1))
+        # Fix points
+        fixed.add(len(springs))
+        springs.append(spring(0, 0, 1, 0))
+        fixed.add(len(springs))
+        springs.append(spring(n - 1, n - 1, 1, 0))
         self.objects.append(obj)
 
     def makeCloth(self, p=vector3(0,0,0), v=vector3(5,0,0), width=5, height=5, k=0.9, mass=0.05):
@@ -96,12 +102,13 @@ class Scene:
         positions = self.state0['positions']
         masses = self.state0['masses']
         springs = self.state0['springs']
+        fixed = self.state0['fixed']
         indices = []
         obj = Object(2, len(self.state0['masses']), len(self.state0['masses']) + width * height)
         skip = np.linalg.norm(p) * vector3(0, -1, 0)
         for i in range(0, height):
             for j in range(0, width):
-                positions.append(p + i * v + j * skip)
+                positions.append(p + j * v + i * skip)
                 masses.append(mass)
                 if j > 0:
                     springs.append(spring(i*width + j - 1, i*width + j, k, np.linalg.norm(v)))
@@ -112,4 +119,10 @@ class Scene:
                 if i < height - 1 and j < width - 1:
                     obj.addIdx((i*width + j, i*width + j + 1, i*width + j + width))
                     obj.addIdx((i*width + j + 1, i*width + j + width, i*width + j + width + 1))
+        # Fix corners
+        fixed.add(len(springs))
+        springs.append(spring(0, 0, k, 0))
+        fixed.add(len(springs))
+        springs.append(spring(width - 1, width - 1, k, 0))
+        # Store object
         self.objects.append(obj)

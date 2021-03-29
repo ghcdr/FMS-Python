@@ -1,19 +1,21 @@
 from panda3d.core import *
 from direct.showbase.ShowBase import ShowBase
+from direct.task.Task import Task
 from random import *
 import sys
 
 
+
 class Renderer(ShowBase):
     """Specialized renderer for mass-spring systems"""
-    dt = 0.0   # Frame delta time
     sim = None  # Simulator instance
     mesh = MeshDrawer()
     objects = None
     particleSize = .7
     segmentSize = .2
+    use_main_thread = True
 
-    def __init__(self, simulator, objects):
+    def __init__(self, simulator, objects, mTd):
         ShowBase.__init__(self)
         props = WindowProperties()
         props.setTitle('FMS')
@@ -41,8 +43,12 @@ class Renderer(ShowBase):
         r.setLightOff(True)
         # Register drawing callbacks
         taskMgr.add(self.draw, "draw")
-        # Enable simulation stepping
-        taskMgr.add(self.updateSim, "updateSim")
+        if self.use_main_thread:
+            taskMgr.add(self.updateSimMain, "updateSimMain")
+        else:
+            # Since drawing is currently managed by tasks, we make physics run independently
+            taskMgr.setupTaskChain('physics_chain', numThreads = 1, threadPriority=TP_low)
+            taskMgr.add(self.updateSim, 'updateSim', taskChain = 'physics_chain')
 
     def draw(self, task):
         self.mesh.begin(base.cam, render)
@@ -52,12 +58,20 @@ class Renderer(ShowBase):
         self.mesh.end()
         return task.cont
 
+    def updateSimMain(self, task):
+        """Main thread: simply step once called"""
+        self.sim.step()
+        return task.cont
+
     def updateSim(self, task):
-        "Task for stepping the simulator forward"
-        self.dt += globalClock.getFrameTime()
-        if(self.dt >= self.sim.dt):
-            self.sim.step()
-            self.dt = 0.0
+        """Separate thread: unfinished"""
+        total = globalClock.getDt()
+        if total >= self.sim.get_dt():
+            # consume elapsed time
+            while total > 0.0:
+                beg = globalClock.getRealTime()
+                self.sim.step()
+                total -= max(self.sim.get_dt(), globalClock.getRealTime() - beg)
         return task.cont # signals the task should be called over again
 
     def drawTriangles(self):
