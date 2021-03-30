@@ -6,9 +6,11 @@ import sys
 
 
 def main():
-    parser = argparse.ArgumentParser()
+    parser = argparse.ArgumentParser(allow_abbrev=False)
     parser.add_argument("--sim", metavar="SIM", default="chain", help="Simulation scene")
-    parser.add_argument("--draw", metavar="DRAW", default="wireframe", help="Draw type")
+    #parser.add_argument("--dim", metavar="DIM", default=5, help="Object's dimensions")
+    parser.add_argument("--prof", metavar="PRF", default=0, help="Step rate at which the simulation will be profiled")
+    parser.add_argument("--method", metavar="MTH", default="FMS", help="Method", choices=['FMS', 'Newton'])
     args = parser.parse_args()
     try:
         newScene = Scene()
@@ -16,7 +18,7 @@ def main():
             raise ValueError("Not a valid constructor.")
         newScene.sceneOpt[args.sim]()
         param = newScene.getState0()
-        solver = Solver(param['positions'], param['masses'], param['springs'], param['fixed'], 'Newton')
+        solver = Solver(param['positions'], param['masses'], param['springs'], param['fixed'], args.method, args.prof)
         app = Renderer(solver, newScene.getObjects(), mTd=False)
         app.run()
     except ValueError as e:

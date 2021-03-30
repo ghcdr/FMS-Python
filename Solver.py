@@ -27,7 +27,7 @@ class Solver:
     d       = None  # Stored spring orientations
     q       = None  # Positional simulation state
     q0      = None  # Previous positional simulation state
-    qNext   = None  # State estimate for Newton's method
+    inertia = None  # Inertia
     M       = None  # Mass (diagonal) matrix 
     Minv    = None  # Inverse mass (diagonal) matrix 
     J       = None  # Some other matrix (eq. 12)
@@ -43,14 +43,19 @@ class Solver:
     g       = None  # Acceleration of gravity, which is also converted to force afterwards 
     dt      = 1.0 / 60.0 # Timestep 
     dt2     = dt ** 2.0
-    max_iterations  = 50
-    max_error       = 1.0 ** -3
-    elapsed_time    = 0.0
-    step_counter    = 0
+    max_iterations      = 20
+    max_error           = 1.0 ** -10
+    elapsed_time        = 0.0
+    step_counter        = 0
+    profiling_rate      = None
 
-
-    def __init__(self, positions, masses, springs, fixed, method='FMS'):
+    def __init__(self, positions, masses, springs, fixed, method, profiling_rate=0):
+        """
+        method: 'Newton' | 'FMS'
+        profiling_rate: the step rate at which the solution will be graphed
+        """
         # General state setup
+        self.profiling_rate = profiling_rate
         self.method = method
         self.g = -9.8
         self.m = len(positions)
@@ -86,6 +91,12 @@ class Solver:
 
     def __del__(self):
         pass
+
+    def __update_internal_state(self):
+        """Update control variables"""
+        self.step_counter+=1
+        self.elapsed_time+=self.dt
+        self.__profile()
         
     def getParticles(self):
         """Returns particles' positions"""
@@ -118,17 +129,23 @@ class Solver:
     def __update_inertial_term(self):
         self.Ma = self.M * (2.0 * self.q - self.q0)
 
+    def __update_inertia(self):
+        self.inertia = 2.0 * self.q - self.q0
+
     def step(self):
         """Advance simulation by one step"""
-        self.step_counter+=1
-        self.elapsed_time+=self.dt
         self.__update_fext()
+        self.__update_internal_state()
+        iterator = None
         if self.method == 'FMS': 
-            self.step_LocalGlobal()
+            iterator = self.step_LocalGlobal()
         elif self.method == 'Newton':
-            self.step_Newton()
+            iterator = self.step_Newton()
         else:
             raise Error('No implemented method matches ', self.method)
+        for k in range(0, self.max_iterations):
+            halt = iterator()
+            if halt: break
 
     """
     Local-Global's method definitions
@@ -136,9 +153,7 @@ class Solver:
     def step_LocalGlobal(self):
         self.__update_inertial_term()
         self.q0 = copy(self.q)
-        # Solve implicit integration
-        for k in range(0, self.max_iterations):
-            self.LocalGlobalsolve()
+        return self.LocalGlobalsolve
 
     def LocalGlobalsolve(self):
         """Alternate between local and global"""
@@ -169,11 +184,10 @@ class Solver:
     Newton's method definitions
     """
     def step_Newton(self):
-        self.qNext = self.q + (self.q - self.q0)*self.dt
+        self.__update_inertia()
         self.q0 = copy(self.q)
-        self.q = copy(self.qNext)
-        for k in range(0, self.max_iterations):
-            self.__Newton()
+        self.q = copy(self.inertia)
+        return self.__Newton
 
     def __Jacobian(self):
         """
@@ -198,7 +212,7 @@ class Solver:
             sgrad = k * (ld - r) * (d/ld)
             J.reshape(self.m, dim)[i] += sgrad
             J.reshape(self.m, dim)[j] -= sgrad
-        J = self.M*(self.q - self.qNext) + self.dt2 * (J - self.fext)
+        J = self.M*(self.q - self.inertia) + self.dt2 * (J - self.fext)
         return J
 
     def __Hessian(self):
@@ -239,3 +253,36 @@ class Solver:
         Ch = cho_factor(H)
         step = cho_solve(Ch, J)
         self.q = self.q - step
+
+    def __profile(self):
+        if self.profiling_rate == 0 or self.step_counter % self.profiling_rate != 0:
+            return
+        iterator = self.step_Newton()
+        states = { 'Newton': [], 'FMS': [] }
+        store = copy(self.q)
+        for k_ in range(0, self.max_iterations):
+            states['Newton'].append(self.q)
+            iterator()
+        self.q = copy(store)
+        self.q0 = copy(store)
+        iterator = self.step_LocalGlobal()
+        for _ in range(0, self.max_iterations):
+            states['FMS'].append(self.q)
+            iterator()
+        # use Newton solution as x*
+        solution = states['Newton'][-1]
+        initial = store[0]
+        X = [*range(0, self.max_iterations)]
+        for method, state in states.items():
+            Y = []
+            for Xi in state:
+                Y.append(np.linalg.norm(Xi - solution)/np.linalg.norm(initial - solution))
+            plt.plot(X, Y, label=method, linestyle='dashed')
+        plt.xlabel('Iteration')
+        plt.ylabel('Error')
+        plt.title('Step %d'% self.step_counter)
+        plt.legend()
+        plt.show()
+        # restore state
+        self.q = copy(store)
+        self.q0 = copy(store)
