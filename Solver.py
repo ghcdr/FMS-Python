@@ -2,7 +2,7 @@ import numpy as np
 from numpy.linalg import LinAlgError
 from copy import copy
 from scipy.sparse.csc import csc_matrix
-from scipy.sparse import kron, diags
+from scipy.sparse import kron, diags, identity
 from scipy.sparse.linalg import factorized, inv
 from scipy.linalg import cholesky, cho_factor, cho_solve, solve
 from matplotlib import pyplot as plt
@@ -39,15 +39,16 @@ class Solver:
     springs = None  # Spring storage as a list of 'spring_type' (defined above)
     fixed   = None  # Fixed positions indices, stored as springs (pos, pos, k, 0)
     qFixed  = None  # The same as initial state; storage for fixed positions
-    fext    = None  # Per particle external forces (accelerations, at first, converted then to forces).
+    fext    = None  # Per particle external forces
     g       = None  # Acceleration of gravity, which is also converted to force afterwards 
     dt      = 1.0 / 60.0 # Timestep 
     dt2     = dt ** 2.0
-    max_iterations      = 20
+    max_iterations      = 5
     max_error           = 1.0 ** -10
     elapsed_time        = 0.0
     step_counter        = 0
     profiling_rate      = None
+    implemented         = None
 
     def __init__(self, positions, masses, springs, fixed, method, profiling_rate=0):
         """
@@ -84,19 +85,17 @@ class Solver:
         # Matrix A precomputation (Global step)
         self.A = self.M + self.dt2 * self.L
         self.Ch = cho_factor(self.A.toarray())
-        # Initialize external forces
-        self.fext = self.M * np.full((self.ndim * self.m, 1), self.g)
         # Store initial state
-        self.state0 = {'q0': self.q}
+        self.state0 = copy(self.q)
+        # Implemented methods
+        self.implemented = {
+            'FMS':      self.step_LocalGlobal,
+            'Jacobi':   self.step_Jacobi,
+            'Newton':   self.step_Newton
+        }
 
     def __del__(self):
         pass
-
-    def __update_internal_state(self):
-        """Update control variables"""
-        self.step_counter+=1
-        self.elapsed_time+=self.dt
-        self.__profile()
         
     def getParticles(self):
         """Returns particles' positions"""
@@ -118,13 +117,61 @@ class Solver:
         raise Error('Not implemented')
 
     def reset(self):
-        self.q = copy(state0['q0'])
+        self.q = copy(self.state0)
+        self.q0 = copy(self.state0)
         self.step_counter=0
         self.elapsed_time=0.0
-        raise Error('Not implemented')
+    
+    def __update_internal_state(self):
+        """Update control variables"""
+        self.step_counter+=1
+        self.elapsed_time+=self.dt
+        self.__profile()
+
+    def __profile(self):
+        if self.profiling_rate == 0 or self.step_counter % self.profiling_rate != 0:
+            return
+        iterator = self.step_Newton()
+        states = { 'Newton': [], 'FMS': [], 'Jacobi': [] }
+        # Newton
+        store = copy(self.q)
+        for k_ in range(0, self.max_iterations):
+            states['Newton'].append(self.q)
+            iterator()
+        # FMS
+        self.q = copy(store)
+        self.q0 = copy(store)
+        iterator = self.step_LocalGlobal()
+        for _ in range(0, self.max_iterations):
+            states['FMS'].append(self.q)
+            iterator()
+        # Jacobi
+        self.q = copy(store)
+        self.q0 = copy(store)
+        iterator = self.step_Jacobi()
+        for _ in range(0, self.max_iterations):
+            states['Jacobi'].append(self.q)
+            iterator()
+        # use Newton solution as x*
+        solution = states['Newton'][-1]
+        initial = store[0]
+        X = [*range(0, self.max_iterations)]
+        for method, state in states.items():
+            Y = []
+            for Xi in state:
+                Y.append(np.linalg.norm(Xi - solution)/np.linalg.norm(initial - solution))
+            plt.plot(X, Y, label=method, linestyle='dashed')
+        plt.xlabel('Iteration')
+        plt.ylabel('Error')
+        plt.title('Step %d'% self.step_counter)
+        plt.legend()
+        plt.show()
+        # restore state
+        self.q = copy(store)
+        self.q0 = copy(store)
 
     def __update_fext(self):
-        self.fext = self.M * (np.full((self.m * self.ndim, 1), self.g))
+        self.fext = self.M * np.full((self.m, self.ndim), np.array([0.0, self.g, 0.0])).reshape(self.m * self.ndim, 1)
 
     def __update_inertial_term(self):
         self.Ma = self.M * (2.0 * self.q - self.q0)
@@ -132,20 +179,21 @@ class Solver:
     def __update_inertia(self):
         self.inertia = 2.0 * self.q - self.q0
 
+    def __update_b(self):
+        self.b = self.dt2 * self.J * self.d + self.Ma + self.dt2 * self.fext
+
     def step(self):
         """Advance simulation by one step"""
         self.__update_fext()
         self.__update_internal_state()
         iterator = None
-        if self.method == 'FMS': 
-            iterator = self.step_LocalGlobal()
-        elif self.method == 'Newton':
-            iterator = self.step_Newton()
+        if self.method in self.implemented:
+            iterator = self.implemented[self.method]()
         else:
             raise Error('No implemented method matches ', self.method)
         for k in range(0, self.max_iterations):
-            halt = iterator()
-            if halt: break
+            err = iterator()
+            #if err < self.max_error: break
 
     """
     Local-Global's method definitions
@@ -159,6 +207,7 @@ class Solver:
         """Alternate between local and global"""
         self.__local()
         self.__global()
+        return np.linalg.norm(self.q - self.q0)
 
     def __local(self):
         """Local step: minimization of eq. 14 w.r.t. d"""
@@ -175,7 +224,7 @@ class Solver:
 
     def __global(self):
         """Global step: minimization of eq. 14 w.r.t. x"""
-        self.b = self.dt2 * self.J * self.d + self.Ma + self.dt2 * self.fext
+        self.__update_b()
         # Using Cholesky
         self.q = cho_solve(self.Ch, self.b)
 
@@ -254,35 +303,7 @@ class Solver:
         step = cho_solve(Ch, J)
         self.q = self.q - step
 
-    def __profile(self):
-        if self.profiling_rate == 0 or self.step_counter % self.profiling_rate != 0:
-            return
-        iterator = self.step_Newton()
-        states = { 'Newton': [], 'FMS': [] }
-        store = copy(self.q)
-        for k_ in range(0, self.max_iterations):
-            states['Newton'].append(self.q)
-            iterator()
-        self.q = copy(store)
-        self.q0 = copy(store)
-        iterator = self.step_LocalGlobal()
-        for _ in range(0, self.max_iterations):
-            states['FMS'].append(self.q)
-            iterator()
-        # use Newton solution as x*
-        solution = states['Newton'][-1]
-        initial = store[0]
-        X = [*range(0, self.max_iterations)]
-        for method, state in states.items():
-            Y = []
-            for Xi in state:
-                Y.append(np.linalg.norm(Xi - solution)/np.linalg.norm(initial - solution))
-            plt.plot(X, Y, label=method, linestyle='dashed')
-        plt.xlabel('Iteration')
-        plt.ylabel('Error')
-        plt.title('Step %d'% self.step_counter)
-        plt.legend()
-        plt.show()
-        # restore state
-        self.q = copy(store)
-        self.q0 = copy(store)
+    def step_Jacobi(self):
+        self.__update_inertial_term()
+        self.q0 = copy(self.q)
+        return self.__Jacobi

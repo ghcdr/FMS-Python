@@ -61,7 +61,7 @@ class Scene:
     def getState0(self):
         return self.state0
 
-    def makeChain(self, p=vector3(-8,0,0), v=vector3(4,0,0), n=50, k=0.9, mass=0.05):
+    def makeChain(self, p=vector3(-8,0,0), v=vector3(4,0,0), n=10, k=0.9, mass=0.005):
         """
         Chain constructor.
         p: beginning position
@@ -89,7 +89,7 @@ class Scene:
         springs.append(spring(n - 1, n - 1, 1, 0))
         self.objects.append(obj)
 
-    def makeCloth(self, p=vector3(0,0,0), v=vector3(5,0,0), width=5, height=5, k=0.9, mass=0.05):
+    def makeCloth(self, p=vector3(0,0,0), v=vector3(3,0,0), width=6, height=6, k=0.09, total_mass=0.1):
         """
         Cloth constructor.
         P: first corner
@@ -99,30 +99,42 @@ class Scene:
         k: all springs' stiffness
         mass: all particles' mass
         """
+        mass = total_mass / (width * height)
         positions = self.state0['positions']
         masses = self.state0['masses']
         springs = self.state0['springs']
         fixed = self.state0['fixed']
         indices = []
         obj = Object(2, len(self.state0['masses']), len(self.state0['masses']) + width * height)
-        skip = np.linalg.norm(p) * vector3(0, -1, 0)
-        for i in range(0, height):
+        skip = np.linalg.norm(v) * vector3(0, -1, 0)
+
+        def create_spring(i, j, k, l):
+            springs.append(spring(i*width + j, k*width + l, k, np.linalg.norm(positions[i*width + j] - positions[k*width + l])))
+
+        def add_triangle(i, j, k, l, m, n):
+            obj.addIdx((i*width + j, k*width + l, m*width + n))
+
+        alt = False
+        for i in range(0, height):   
             for j in range(0, width):
                 positions.append(p + j * v + i * skip)
                 masses.append(mass)
-                if j > 0:
-                    springs.append(spring(i*width + j - 1, i*width + j, k, np.linalg.norm(v)))
-                if i > 0:
-                    springs.append(spring(i*width + j - width, i*width + j, k, np.linalg.norm(v)))
+                if j > 0: create_spring(i, j - 1, i, j)
+                if i > 0: create_spring(i - 1, j, i, j)
                 if i > 0 and j > 0:
-                    springs.append(spring(i*width + j - 1 - width, i*width + j, k, np.linalg.norm(v)))
-                if i < height - 1 and j < width - 1:
-                    obj.addIdx((i*width + j, i*width + j + 1, i*width + j + width))
-                    obj.addIdx((i*width + j + 1, i*width + j + width, i*width + j + width + 1))
+                    alt = not alt
+                    if alt:
+                        create_spring(i - 1, j - 1, i, j)
+                        add_triangle(i - 1, j - 1, i, j, i, j - 1)
+                        add_triangle(i - 1, j - 1, i, j, i - 1, j)
+                    else: 
+                        create_spring(i - 1, j, i, j - 1)
+                        add_triangle(i - 1, j, i, j - 1, i, j)
+                        add_triangle(i - 1, j, i, j - 1, i - 1, j - 1)
         # Fix corners
         fixed.add(len(springs))
-        springs.append(spring(0, 0, k, 0))
+        springs.append(spring(0, 0, 1, 0))
         fixed.add(len(springs))
-        springs.append(spring(width - 1, width - 1, k, 0))
+        springs.append(spring(width - 1, width - 1, 1, 0))
         # Store object
         self.objects.append(obj)
