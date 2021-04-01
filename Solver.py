@@ -43,7 +43,7 @@ class Solver:
     g       = None  # Acceleration of gravity, which is also converted to force afterwards 
     dt      = 1.0 / 60.0 # Timestep 
     dt2     = dt ** 2.0
-    max_iterations      = 5
+    max_iterations      = 10
     max_error           = 1.0 ** -10
     elapsed_time        = 0.0
     step_counter        = 0
@@ -193,7 +193,6 @@ class Solver:
             raise Error('No implemented method matches ', self.method)
         for k in range(0, self.max_iterations):
             err = iterator()
-            #if err < self.max_error: break
 
     """
     Local-Global's method definitions
@@ -207,7 +206,6 @@ class Solver:
         """Alternate between local and global"""
         self.__local()
         self.__global()
-        return np.linalg.norm(self.q - self.q0)
 
     def __local(self):
         """Local step: minimization of eq. 14 w.r.t. d"""
@@ -225,9 +223,7 @@ class Solver:
     def __global(self):
         """Global step: minimization of eq. 14 w.r.t. x"""
         self.__update_b()
-        # Using Cholesky
         self.q = cho_solve(self.Ch, self.b)
-
 
     """
     Newton's method definitions
@@ -307,3 +303,8 @@ class Solver:
         self.__update_inertial_term()
         self.q0 = copy(self.q)
         return self.__Jacobi
+
+    def __Jacobi(self):
+        self.__update_b()
+        Minv = np.linalg.inv(np.diag(self.A.toarray())*np.eye(self.m * self.ndim))
+        self.q = (np.eye(self.m * self.ndim) - Minv * self.A).dot(self.q) + Minv.dot(self.b)

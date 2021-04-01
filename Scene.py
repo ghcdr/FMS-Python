@@ -61,7 +61,7 @@ class Scene:
     def getState0(self):
         return self.state0
 
-    def makeChain(self, p=vector3(-8,0,0), v=vector3(4,0,0), n=10, k=0.9, mass=0.005):
+    def makeChain(self, p=vector3(-8,0,0), v=vector3(4,0,0), n=5, k=0.9, mass=0.005):
         """
         Chain constructor.
         p: beginning position

@@ -11,6 +11,7 @@ import sys
 class Renderer(ShowBase):
     """Specialized renderer for mass-spring systems"""
     sim = None  # Simulator instance
+    change_method = None
     sim_running = True
     stats = []
     mesh = MeshDrawer()
@@ -26,6 +27,7 @@ class Renderer(ShowBase):
         props = WindowProperties()
         props.setTitle('Demo')
         base.win.requestProperties(props)
+        self.change_method = simulator.method
         self.title = OnscreenText(
             text=simulator.method,
             parent=base.a2dBottomRight, scale=.09,
@@ -41,6 +43,8 @@ class Renderer(ShowBase):
         self.accept("s", self.step_once)
         self.accept("f1", self.toggle_wireframe)
         self.accept("f2", self.toggle_particles)
+        self.accept("arrow_up", self.method_selector, [True])
+        self.accept("arrow_down", self.method_selector, [False])
         # Reposition camera, with -z as front
         base.useDrive()
         base.useTrackball()
@@ -81,6 +85,17 @@ class Renderer(ShowBase):
     def make_instruction(self, pos, content):
         OnscreenText(text=content, parent=base.a2dTopLeft, pos=(0.07, pos * 0.08 - 1.92),
             fg=(1, 1, 1, 1), align=TextNode.ALeft, scale=.055)
+
+    def set_title(self, text):
+        self.title.text = text
+
+    def method_selector(self, right):
+        m = self.sim.method
+        opt = [*self.sim.implemented.keys()]
+        if right: next = 0 if opt.index(m) + 1 >= len(opt) else opt.index(m) + 1
+        else: next = opt.index(m) - 1
+        self.change_method = opt[next]
+        self.set_title(opt[next] + " (pending reset: press 'R')")
     
     def show_stats(self):
          for scrtxt, cb in self.stats:
@@ -96,6 +111,8 @@ class Renderer(ShowBase):
         self.draw_particles = not self.draw_particles
 
     def reset_sim(self):
+        self.sim.method = self.change_method
+        self.set_title(self.sim.method)
         self.sim.reset()
 
     def step_once(self):
