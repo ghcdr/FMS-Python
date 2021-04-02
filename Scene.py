@@ -76,6 +76,11 @@ class Scene:
         fixed = self.state0['fixed']
         obj = Object(1, len(self.state0['masses']), len(self.state0['masses']) + n)
         indices = []
+
+        def add_attachment(i, s=k):
+            fixed.add(len(springs))
+            springs.append(spring(i, i, s, 0))
+
         for i in range(0, n):
             positions.append(p + i * v)
             masses.append(mass)
@@ -83,13 +88,11 @@ class Scene:
                 springs.append(spring(i, i + 1, k, np.linalg.norm(v)))
                 obj.addIdx((i, i + 1))
         # Fix points
-        fixed.add(len(springs))
-        springs.append(spring(0, 0, 1, 0))
-        fixed.add(len(springs))
-        springs.append(spring(n - 1, n - 1, 1, 0))
+        add_attachment(0)
+        add_attachment(n - 1)
         self.objects.append(obj)
 
-    def makeCloth(self, p=vector3(0,0,0), v=vector3(3,0,0), width=6, height=6, k=0.09, total_mass=0.1):
+    def makeCloth(self, p=vector3(0,0,0), v=vector3(3,0,0), width=3, height=3, k=0.09, total_mass=0.1):
         """
         Cloth constructor.
         P: first corner
@@ -114,6 +117,10 @@ class Scene:
         def add_triangle(i, j, k, l, m, n):
             obj.addIdx((i*width + j, k*width + l, m*width + n))
 
+        def add_attachment(i, s=k):
+            fixed.add(len(springs))
+            springs.append(spring(i, i, s, 0))
+
         alt = False
         for i in range(0, height):   
             for j in range(0, width):
@@ -132,9 +139,7 @@ class Scene:
                         add_triangle(i - 1, j, i, j - 1, i, j)
                         add_triangle(i - 1, j, i, j - 1, i - 1, j - 1)
         # Fix corners
-        fixed.add(len(springs))
-        springs.append(spring(0, 0, 1, 0))
-        fixed.add(len(springs))
-        springs.append(spring(width - 1, width - 1, 1, 0))
+        add_attachment(0)
+        add_attachment(width - 1)
         # Store object
         self.objects.append(obj)

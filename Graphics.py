@@ -11,7 +11,6 @@ import sys
 class Renderer(ShowBase):
     """Specialized renderer for mass-spring systems"""
     sim = None  # Simulator instance
-    change_method = None
     sim_running = True
     stats = []
     mesh = MeshDrawer()
@@ -21,6 +20,11 @@ class Renderer(ShowBase):
     use_main_thread = True
     draw_wireframe = True
     draw_particles = True
+    # control
+    stats = []
+    change_method = None
+    instruction_counter = 0
+    label_counter = 0
 
     def __init__(self, simulator, objects, mTd):
         ShowBase.__init__(self)
@@ -45,6 +49,8 @@ class Renderer(ShowBase):
         self.accept("f2", self.toggle_particles)
         self.accept("arrow_up", self.method_selector, [True])
         self.accept("arrow_down", self.method_selector, [False])
+        self.accept("p", self.fire_profiler, [False])
+        self.accept("t", self.fire_profiler, [True])
         # Reposition camera, with -z as front
         base.useDrive()
         base.useTrackball()
@@ -52,14 +58,17 @@ class Renderer(ShowBase):
         base.cam.setHpr(0, -90, 0)
         base.cam.setPos(0, 0, 100)
         # Display info
-        self.make_label(0, lambda: 'Elapsed time: ' + str(round(self.sim.elapsed_time, 2)))
-        self.make_label(1, lambda: 'Steps: ' + str(self.sim.step_counter))
-        self.make_instruction(5, "R: reset simulation")
-        self.make_instruction(4, "SPACE: stop/continue")
-        self.make_instruction(3, "S: step once")
-        self.make_instruction(2, "F1: toggle wireframe")
-        self.make_instruction(1, "F2: toggle particles")
-        self.make_instruction(0, "ESC: quit")
+        self.make_label(lambda: 'Elapsed time: ' + str(round(self.sim.elapsed_time, 2)))
+        self.make_label(lambda: 'Steps: ' + str(self.sim.step_counter))
+        self.make_instruction("ESC: quit")
+        self.make_instruction("F2: toggle particles")
+        self.make_instruction("F1: toggle wireframe")
+        self.make_instruction("T: profile all")
+        self.make_instruction("P: profile")
+        self.make_instruction("S: step once")
+        self.make_instruction("Arrow up/down: change method")
+        self.make_instruction("R: reset simulation")
+        self.make_instruction("SPACE: stop/continue")
         # General setup
         self.setBackgroundColor((0,0,0, 1))
         r = self.mesh.getRoot()
@@ -78,13 +87,17 @@ class Renderer(ShowBase):
             taskMgr.setupTaskChain('physics_chain', numThreads = 1, threadPriority=TP_low)
             taskMgr.add(self.updateSim, 'updateSim', taskChain = 'physics_chain')
     
-    def make_label(self, pos, cb):
-        self.stats.append((OnscreenText(text=str(cb()), parent=base.a2dTopLeft, pos=(0.07, -.09 * pos - 0.1),
+    def make_label(self, cb):
+        """Requires a callback to update the respective value"""
+        self.stats.append((OnscreenText(text=str(cb()), parent=base.a2dTopLeft, pos=(0.07, -.09 * self.label_counter - 0.1),
             fg=(1, 1, 1, 1), align=TextNode.ALeft, mayChange=True, scale=.09), cb))
+        self.label_counter += 1
 
-    def make_instruction(self, pos, content):
-        OnscreenText(text=content, parent=base.a2dTopLeft, pos=(0.07, pos * 0.08 - 1.92),
+    def make_instruction(self, content):
+        """Static onscreen text"""
+        OnscreenText(text=content, parent=base.a2dTopLeft, pos=(0.07, self.instruction_counter * 0.08 - 1.92),
             fg=(1, 1, 1, 1), align=TextNode.ALeft, scale=.055)
+        self.instruction_counter += 1
 
     def set_title(self, text):
         self.title.text = text
@@ -118,6 +131,9 @@ class Renderer(ShowBase):
     def step_once(self):
         self.sim_running = False
         self.sim.step()
+
+    def fire_profiler(self, all):
+        self.sim.profile(True, all)
 
     def draw(self, task):
         self.show_stats()

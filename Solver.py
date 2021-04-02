@@ -43,7 +43,7 @@ class Solver:
     g       = None  # Acceleration of gravity, which is also converted to force afterwards 
     dt      = 1.0 / 60.0 # Timestep 
     dt2     = dt ** 2.0
-    max_iterations      = 10
+    max_iterations      = 20
     max_error           = 1.0 ** -10
     elapsed_time        = 0.0
     step_counter        = 0
@@ -126,47 +126,46 @@ class Solver:
         """Update control variables"""
         self.step_counter+=1
         self.elapsed_time+=self.dt
-        self.__profile()
+        self.profile()
 
-    def __profile(self):
-        if self.profiling_rate == 0 or self.step_counter % self.profiling_rate != 0:
+    def profile(self, triggered=False, all=False):
+        if (not triggered) and (self.profiling_rate == 0 or self.step_counter % self.profiling_rate != 0):
             return
-        iterator = self.step_Newton()
-        states = { 'Newton': [], 'FMS': [], 'Jacobi': [] }
-        # Newton
+        # State of reference
         store = copy(self.q)
-        for k_ in range(0, self.max_iterations):
-            states['Newton'].append(self.q)
-            iterator()
-        # FMS
-        self.q = copy(store)
-        self.q0 = copy(store)
-        iterator = self.step_LocalGlobal()
+        # Newton
+        iterator = self.step_Newton()
+        newton_states = []
         for _ in range(0, self.max_iterations):
-            states['FMS'].append(self.q)
-            iterator()
-        # Jacobi
-        self.q = copy(store)
-        self.q0 = copy(store)
-        iterator = self.step_Jacobi()
-        for _ in range(0, self.max_iterations):
-            states['Jacobi'].append(self.q)
+            newton_states.append(self.q)
             iterator()
         # use Newton solution as x*
-        solution = states['Newton'][-1]
+        solution = newton_states[-1]
         initial = store[0]
+        # X-axis values
         X = [*range(0, self.max_iterations)]
-        for method, state in states.items():
+        for method in self.implemented.keys() if all else ['Newton'] + [] if self.method == 'Newton' else [self.Method]:
+            states = []
+            if method != 'Newton':
+                self.q = copy(store)
+                self.q0 = copy(store)
+                iterator = self.implemented[method]
+                for _ in range(0, self.max_iterations):
+                    states.append(self.q)
+                    iterator()
+            else: 
+                states = newton_states
             Y = []
-            for Xi in state:
+            for Xi in states:
                 Y.append(np.linalg.norm(Xi - solution)/np.linalg.norm(initial - solution))
             plt.plot(X, Y, label=method, linestyle='dashed')
+        # Plot   
         plt.xlabel('Iteration')
         plt.ylabel('Error')
         plt.title('Step %d'% self.step_counter)
         plt.legend()
         plt.show()
-        # restore state
+        # Restore state
         self.q = copy(store)
         self.q0 = copy(store)
 
@@ -299,6 +298,9 @@ class Solver:
         step = cho_solve(Ch, J)
         self.q = self.q - step
 
+    """
+    Jacobi
+    """
     def step_Jacobi(self):
         self.__update_inertial_term()
         self.q0 = copy(self.q)
