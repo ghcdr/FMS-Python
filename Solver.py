@@ -43,7 +43,7 @@ class Solver:
     g       = None  # Acceleration of gravity, which is also converted to force afterwards 
     dt      = 1.0 / 60.0 # Timestep 
     dt2     = dt ** 2.0
-    max_iterations      = 20
+    max_iterations      = 100
     max_error           = 1.0 ** -10
     elapsed_time        = 0.0
     step_counter        = 0
@@ -144,7 +144,7 @@ class Solver:
         initial = store[0]
         # X-axis values
         X = [*range(0, self.max_iterations)]
-        for method in self.implemented.keys() if all else ['Newton'] + [] if self.method == 'Newton' else [self.Method]:
+        for method in self.implemented.keys() if all else ['Newton'] + [] if self.method == 'Newton' else [self.method]:
             states = []
             if method != 'Newton':
                 self.q = copy(store)
@@ -190,7 +190,7 @@ class Solver:
             iterator = self.implemented[self.method]()
         else:
             raise Error('No implemented method matches ', self.method)
-        for k in range(0, self.max_iterations):
+        for _ in range(0, self.max_iterations):
             err = iterator()
 
     """
@@ -307,6 +307,9 @@ class Solver:
         return self.__Jacobi
 
     def __Jacobi(self):
+        """Global step solved with Jacobi"""
+        self.__local()
+        # One Jacobi iteration
         self.__update_b()
         Minv = np.linalg.inv(np.diag(self.A.toarray())*np.eye(self.m * self.ndim))
         self.q = (np.eye(self.m * self.ndim) - Minv * self.A).dot(self.q) + Minv.dot(self.b)

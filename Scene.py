@@ -92,7 +92,7 @@ class Scene:
         add_attachment(n - 1)
         self.objects.append(obj)
 
-    def makeCloth(self, p=vector3(0,0,0), v=vector3(3,0,0), width=3, height=3, k=0.09, total_mass=0.1):
+    def makeCloth(self, p=vector3(0,0,0), v=vector3(3,0,0), width=4, height=4, k=60.0, total_mass=0.3):
         """
         Cloth constructor.
         P: first corner
