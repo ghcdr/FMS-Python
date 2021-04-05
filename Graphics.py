@@ -102,13 +102,15 @@ class Renderer(ShowBase):
     def set_title(self, text):
         self.title.text = text
 
-    def method_selector(self, right):
-        m = self.sim.method
+    def method_selector(self, inc):
+        m = self.change_method
         opt = [*self.sim.implemented.keys()]
-        if right: next = 0 if opt.index(m) + 1 >= len(opt) else opt.index(m) + 1
-        else: next = opt.index(m) - 1
+        if inc: 
+            next = 0 if opt.index(m) + 1 >= len(opt) else opt.index(m) + 1
+        else: 
+            next = opt.index(m) - 1
         self.change_method = opt[next]
-        self.set_title(opt[next] + " (pending reset: press 'R')")
+        self.set_title("(pending reset: press 'R')  " + opt[next])
     
     def show_stats(self):
          for scrtxt, cb in self.stats:

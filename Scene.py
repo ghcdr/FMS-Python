@@ -61,7 +61,7 @@ class Scene:
     def getState0(self):
         return self.state0
 
-    def makeChain(self, p=vector3(-8,0,0), v=vector3(4,0,0), n=5, k=0.9, mass=0.005):
+    def makeChain(self, p=vector3(-8,0,0), v=vector3(4,0,0), n=5, k=90.0, mass=0.5):
         """
         Chain constructor.
         p: beginning position
@@ -92,7 +92,7 @@ class Scene:
         add_attachment(n - 1)
         self.objects.append(obj)
 
-    def makeCloth(self, p=vector3(0,0,0), v=vector3(3,0,0), width=4, height=4, k=60.0, total_mass=0.3):
+    def makeCloth(self, p=vector3(0,0,0), v=vector3(3,0,0), width=5, height=5, k=90.0, total_mass=0.3):
         """
         Cloth constructor.
         P: first corner

@@ -33,7 +33,6 @@ class Solver:
     J       = None  # Some other matrix (eq. 12)
     L       = None  # The Laplacian
     A       = None  # 'A' as in 'Ax=b', in the problem of global step
-    Ma      = None  # Inertial term
     Ch      = None  # Cholesky factorization of 'A'
     b       = None  # 'b' in the same context 
     springs = None  # Spring storage as a list of 'spring_type' (defined above)
@@ -43,8 +42,8 @@ class Solver:
     g       = None  # Acceleration of gravity, which is also converted to force afterwards 
     dt      = 1.0 / 60.0 # Timestep 
     dt2     = dt ** 2.0
-    max_iterations      = 100
-    max_error           = 1.0 ** -10
+    max_iterations      = 10
+    max_error           = 1.0 ** -20
     elapsed_time        = 0.0
     step_counter        = 0
     profiling_rate      = None
@@ -52,8 +51,8 @@ class Solver:
 
     def __init__(self, positions, masses, springs, fixed, method, profiling_rate=0):
         """
-        method: 'Newton' | 'FMS'
-        profiling_rate: the step rate at which the solution will be graphed
+        method: 'Newton' | 'FMS' | 'Jacobi'
+        profiling_rate: the step rate at which the performance will be graphed
         """
         # General state setup
         self.profiling_rate = profiling_rate
@@ -63,6 +62,8 @@ class Solver:
         self.s = len(springs)
         self.q0 = np.array(positions).reshape(self.ndim * self.m, 1)
         self.q = copy(self.q0)
+        # Store initial state
+        self.state0 = copy(self.q)
         self.fixed = fixed
         self.qFixed = copy(self.q0)
         self.M = kron(diags(masses), np.eye(self.ndim), format='csc')
@@ -85,8 +86,6 @@ class Solver:
         # Matrix A precomputation (Global step)
         self.A = self.M + self.dt2 * self.L
         self.Ch = cho_factor(self.A.toarray())
-        # Store initial state
-        self.state0 = copy(self.q)
         # Implemented methods
         self.implemented = {
             'FMS':      self.step_LocalGlobal,
@@ -119,92 +118,80 @@ class Solver:
     def reset(self):
         self.q = copy(self.state0)
         self.q0 = copy(self.state0)
-        self.step_counter=0
-        self.elapsed_time=0.0
+        self.step_counter = 0
+        self.elapsed_time = 0.0
     
     def __update_internal_state(self):
-        """Update control variables"""
-        self.step_counter+=1
-        self.elapsed_time+=self.dt
+        """Update control variables, profiling"""
+        self.step_counter += 1
+        self.elapsed_time += self.dt
         self.profile()
 
     def profile(self, triggered=False, all=False):
         if (not triggered) and (self.profiling_rate == 0 or self.step_counter % self.profiling_rate != 0):
             return
-        # State of reference
-        store = copy(self.q)
-        # Newton
-        iterator = self.step_Newton()
-        newton_states = []
-        for _ in range(0, self.max_iterations):
-            newton_states.append(self.q)
-            iterator()
-        # use Newton solution as x*
-        solution = newton_states[-1]
-        initial = store[0]
+        # Save state
+        q0_store = copy(self.q0)
+        q_store = copy(self.q)
         # X-axis values
         X = [*range(0, self.max_iterations)]
-        for method in self.implemented.keys() if all else ['Newton'] + [] if self.method == 'Newton' else [self.method]:
-            states = []
-            if method != 'Newton':
-                self.q = copy(store)
-                self.q0 = copy(store)
-                iterator = self.implemented[method]
-                for _ in range(0, self.max_iterations):
-                    states.append(self.q)
-                    iterator()
-            else: 
-                states = newton_states
+        # Y-axis
+        for method in (self.implemented.keys() if all else [self.method]):
             Y = []
-            for Xi in states:
-                Y.append(np.linalg.norm(Xi - solution)/np.linalg.norm(initial - solution))
+            self.__update_internal_state()
+            self.__update_inertia()
+            self.__update_fext()
+            self.q0 = copy(self.q)
+            self.q = copy(self.inertia)
+            iterator = self.implemented[method]()
+            for _ in range(0, self.max_iterations):
+                iterator()
+                Y.append(np.linalg.norm(self.__Gradient()))
             plt.plot(X, Y, label=method, linestyle='dashed')
+            # Restore
+            self.q0 = copy(q0_store)
+            self.q = copy(q_store)
         # Plot   
         plt.xlabel('Iteration')
         plt.ylabel('Error')
         plt.title('Step %d'% self.step_counter)
         plt.legend()
         plt.show()
-        # Restore state
-        self.q = copy(store)
-        self.q0 = copy(store)
 
     def __update_fext(self):
-        self.fext = self.M * np.full((self.m, self.ndim), np.array([0.0, self.g, 0.0])).reshape(self.m * self.ndim, 1)
-
-    def __update_inertial_term(self):
-        self.Ma = self.M * (2.0 * self.q - self.q0)
+        self.fext = self.M.dot(
+            np.full((self.m, self.ndim), np.array([0.0, self.g, 0.0])).reshape(self.m * self.ndim, 1))
 
     def __update_inertia(self):
         self.inertia = 2.0 * self.q - self.q0
 
     def __update_b(self):
-        self.b = self.dt2 * self.J * self.d + self.Ma + self.dt2 * self.fext
+        self.b = (self.dt2 * self.J * self.d) + (self.M * self.inertia) + (self.dt2 * self.fext)
 
     def step(self):
         """Advance simulation by one step"""
-        self.__update_fext()
         self.__update_internal_state()
-        iterator = None
-        if self.method in self.implemented:
-            iterator = self.implemented[self.method]()
-        else:
+        self.__update_inertia()
+        self.__update_fext()
+        self.q0 = copy(self.q)
+        self.q = copy(self.inertia)
+        if self.method not in self.implemented:
             raise Error('No implemented method matches ', self.method)
+        iterator = self.implemented[self.method]()
         for _ in range(0, self.max_iterations):
-            err = iterator()
+            if iterator(): break          
 
     """
     Local-Global's method definitions
     """
     def step_LocalGlobal(self):
-        self.__update_inertial_term()
-        self.q0 = copy(self.q)
         return self.LocalGlobalsolve
 
     def LocalGlobalsolve(self):
         """Alternate between local and global"""
         self.__local()
         self.__global()
+        return False
 
     def __local(self):
         """Local step: minimization of eq. 14 w.r.t. d"""
@@ -221,19 +208,34 @@ class Solver:
 
     def __global(self):
         """Global step: minimization of eq. 14 w.r.t. x"""
-        self.__update_b()
+        self.__update_b() # update rhs
         self.q = cho_solve(self.Ch, self.b)
 
     """
     Newton's method definitions
     """
     def step_Newton(self):
-        self.__update_inertia()
-        self.q0 = copy(self.q)
-        self.q = copy(self.inertia)
         return self.__Newton
 
-    def __Jacobian(self):
+    def __springs_Jacobian(self):
+        dim = self.ndim
+        J = np.zeros((self.m * dim, 1))
+        positions = self.q.reshape(self.m, dim)
+        for idx, s in enumerate(self.springs):
+            i, j = s['p1'], s['p2']
+            k, r = s['k'], s['r']
+            # Attachments
+            if idx in self.fixed:
+                J.reshape(self.m, dim)[i] += k * (positions[i] - self.qFixed.reshape(self.m, dim)[i])
+                continue
+            d = positions[i] - positions[j]
+            ld = np.linalg.norm(d)
+            sgrad = k * (ld - r) * (d/ld)
+            J.reshape(self.m, dim)[i] += sgrad
+            J.reshape(self.m, dim)[j] -= sgrad
+        return J
+
+    def __Gradient(self):
         """
         Computes the constraints' Jacobian
         g'(x) = (x - y)M + Nabla E(x)
@@ -241,23 +243,9 @@ class Solver:
             = (|p_1 - p_2| - r)*((p_1 - p_2)/|p_1 - p_2|)) + F_ext
         Nabla E_i = [alpha_i, -alpha_i]
         """
-        dim = self.ndim
-        J = np.zeros((self.m * dim, 1))
-        positions = self.q.reshape(self.m, dim)
-        for idx, s in enumerate(self.springs):
-            # Attachments
-            if idx in self.fixed:
-                J.reshape(self.m, dim)[s['p1']] += s['k'] * (positions[s['p1']] - self.qFixed.reshape(self.m, dim)[s['p1']])
-                continue
-            i, j = s['p1'], s['p2']
-            d = positions[s['p1']] - positions[s['p2']]
-            ld = np.linalg.norm(d)
-            k, r = s['k'], s['r']
-            sgrad = k * (ld - r) * (d/ld)
-            J.reshape(self.m, dim)[i] += sgrad
-            J.reshape(self.m, dim)[j] -= sgrad
-        J = self.M*(self.q - self.inertia) + self.dt2 * (J - self.fext)
-        return J
+        J = self.__springs_Jacobian()
+        G = self.M.dot(self.q - self.inertia) + self.dt2 * (J - self.fext)
+        return G
 
     def __Hessian(self):
         """
@@ -272,16 +260,16 @@ class Solver:
         positions = self.q.reshape(self.m, dim)
         H = np.zeros((self.m * dim, self.m * dim))
         for idx, s in enumerate(self.springs):
+            i, j = s['p1'], s['p2']
+            k, r = s['k'], s['r']
             # Attachments
             if idx in self.fixed:
-                H[s['p1']*dim:s['p1']*dim+dim, s['p1']*dim:s['p1']*dim+dim] += s['k'] * np.eye(dim)
+                H[i*dim:i*dim+dim, i*dim:i*dim+dim] += k * np.eye(dim)
                 continue
-            i, j = s['p1'], s['p2']
-            d = positions[s['p1']].reshape(1, dim) - positions[s['p2']].reshape(1, dim)
+            d = positions[i].reshape(1, dim) - positions[j].reshape(1, dim)
             d2 = d.transpose() * d
             ld = np.linalg.norm(d)
-            ld2 = ld ** 2
-            k, r = s['k'], s['r']
+            ld2 = ld ** 2.0
             spring_hessian = k * (np.eye(dim) - (r/ld) * (np.eye(dim) - (d2/ld2)))
             H[i*dim:i*dim+dim, i*dim:i*dim+dim] += spring_hessian
             H[j*dim:j*dim+dim, j*dim:j*dim+dim] += spring_hessian
@@ -292,18 +280,17 @@ class Solver:
 
     def __Newton(self):
         """One Newton iteration"""
-        J = self.__Jacobian()
+        J = self.__Gradient()
         H = self.__Hessian()
         Ch = cho_factor(H)
         step = cho_solve(Ch, J)
         self.q = self.q - step
+        return np.linalg.norm(J) < self.max_error
 
     """
     Jacobi
     """
     def step_Jacobi(self):
-        self.__update_inertial_term()
-        self.q0 = copy(self.q)
         return self.__Jacobi
 
     def __Jacobi(self):
@@ -313,3 +300,4 @@ class Solver:
         self.__update_b()
         Minv = np.linalg.inv(np.diag(self.A.toarray())*np.eye(self.m * self.ndim))
         self.q = (np.eye(self.m * self.ndim) - Minv * self.A).dot(self.q) + Minv.dot(self.b)
+        return False
