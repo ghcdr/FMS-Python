@@ -6,6 +6,7 @@ from scipy.sparse import kron, diags, identity
 from scipy.sparse.linalg import factorized, inv
 from scipy.linalg import cholesky, cho_factor, cho_solve, solve
 from matplotlib import pyplot as plt
+from scipy.ndimage.interpolation import shift
 
 
 spring_type = [('p1', int), ('p2', int), ('k', float), ('r', int)]
@@ -19,35 +20,44 @@ def spring(p1, p2, k, r):
 
 class Solver:
     """Implementation of the Fast Mass-Springs method (Liu et al.)"""
-    state0  = None  # Initial state
-    method  = ''    # Integrator
-    ndim    = 3     # 3-dimensional space
-    m       = 0     # Particle Count
-    s       = 0     # Spring count
-    d       = None  # Stored spring orientations
-    q       = None  # Positional simulation state
-    q0      = None  # Previous positional simulation state
-    inertia = None  # Inertia
-    M       = None  # Mass (diagonal) matrix 
-    Minv    = None  # Inverse mass (diagonal) matrix 
-    J       = None  # Some other matrix (eq. 12)
-    L       = None  # The Laplacian
-    A       = None  # 'A' as in 'Ax=b', in the problem of global step
-    Ch      = None  # Cholesky factorization of 'A'
-    b       = None  # 'b' in the same context 
-    springs = None  # Spring storage as a list of 'spring_type' (defined above)
-    fixed   = None  # Fixed positions indices, stored as springs (pos, pos, k, 0)
-    qFixed  = None  # The same as initial state; storage for fixed positions
-    fext    = None  # Per particle external forces
-    g       = None  # Acceleration of gravity, which is also converted to force afterwards 
-    dt      = 1.0 / 60.0 # Timestep 
-    dt2     = dt ** 2.0
-    max_iterations      = 10
+    state0              = None  # Initial state
+    method              = ''    # Integrator
+    ndim                = 3     # 3-dimensional space
+    m                   = 0     # Particle Count
+    s                   = 0     # Spring count
+    d                   = None  # Stored spring orientations
+    q                   = None  # Positional simulation state
+    q0                  = None  # Previous positional simulation state
+    inertia             = None  # Inertia
+    M                   = None  # Mass (diagonal) matrix 
+    Minv                = None  # Inverse mass (diagonal) matrix 
+    J                   = None  # Some other matrix (eq. 12)
+    L                   = None  # The Laplacian
+    A                   = None  # 
+    Ch                  = None  # 
+    b                   = None  #  
+    springs             = None  # 
+    fixed               = None  # 
+    qFixed              = None  # Storage for fixed positions
+    fext                = None  # Per particle external forces
+    g                   = None  # Acceleration of gravity
+    dt                  = 1.0 / 30.0 # Timestep 
+    dt2                 = dt ** 2.0
+    max_iterations      = 20
     max_error           = 1.0 ** -20
     elapsed_time        = 0.0
     step_counter        = 0
     profiling_rate      = None
     implemented         = None
+
+    m_iterations        = 6
+    curr_anderson_it    = 0
+    m_prev_G            = None
+    m_prev_F            = None
+    E_prev              = None
+    qLast               = None
+    lengths             = None
+    gamma               = None
 
     def __init__(self, positions, masses, springs, fixed, method, profiling_rate=0):
         """
@@ -90,7 +100,9 @@ class Solver:
         self.implemented = {
             'FMS':      self.step_LocalGlobal,
             'Jacobi':   self.step_Jacobi,
-            'Newton':   self.step_Newton
+            'Newton':   self.step_Newton,
+            'Anderson': self.step_Anderson,
+            #'A2FOM':    self.step_A2FOM
         }
 
     def __del__(self):
@@ -122,12 +134,13 @@ class Solver:
         self.elapsed_time = 0.0
     
     def __update_internal_state(self):
-        """Update control variables, profiling"""
+        """Update control variables; profiling"""
         self.step_counter += 1
         self.elapsed_time += self.dt
         self.profile()
 
     def profile(self, triggered=False, all=False):
+        all = True
         if (not triggered) and (self.profiling_rate == 0 or self.step_counter % self.profiling_rate != 0):
             return
         # Save state
@@ -138,7 +151,6 @@ class Solver:
         # Y-axis
         for method in (self.implemented.keys() if all else [self.method]):
             Y = []
-            self.__update_internal_state()
             self.__update_inertia()
             self.__update_fext()
             self.q0 = copy(self.q)
@@ -167,6 +179,15 @@ class Solver:
 
     def __update_b(self):
         self.b = (self.dt2 * self.J * self.d) + (self.M * self.inertia) + (self.dt2 * self.fext)
+
+    def total_energy(self):
+        positions = self.q.reshape(self.m, self.ndim)
+        spring_potentials = 0.0
+        for s in self.springs:
+            l = np.linalg.norm(positions[s['p1']] - positions[s['p2']]) - s['r']
+            spring_potentials += .5 * s['k'] * l * l
+        return .5 * (self.q - self.inertia).transpose().dot(self.M.dot(self.q - self.inertia))[0, 0] + \
+            self.dt2 * (spring_potentials - self.q.T.dot(self.fext))[0, 0]
 
     def step(self):
         """Advance simulation by one step"""
@@ -301,3 +322,85 @@ class Solver:
         Minv = np.linalg.inv(np.diag(self.A.toarray())*np.eye(self.m * self.ndim))
         self.q = (np.eye(self.m * self.ndim) - Minv * self.A).dot(self.q) + Minv.dot(self.b)
         return False
+
+    """
+    Anderson Extrapolation
+    """
+    def step_Anderson(self):
+        assert(self.m_iterations > 1)
+        self.curr_anderson_it = 0
+        self.col_idx = 0
+        self.m_prev_G = np.zeros((self.ndim * self.m, self.m_iterations))
+        self.m_prev_F = np.zeros((self.ndim * self.m, self.m_iterations))
+        self.qLast = copy(self.q)
+        self.E_prev = self.total_energy()
+        self.lengths = np.ones(self.m_iterations)
+        self.gamma = np.zeros((1))
+        self.AA = np.zeros((self.m_iterations, self.m_iterations))
+
+        return self.Anderson
+
+
+    def Anderson(self):
+        # Local-Global step, and residual computation
+        #self.__local()
+        # Check if Energy will decrease
+        #E = self.total_energy()
+        #if E >= self.E_prev:
+        #    self.q = copy(self.qLast)
+        #    self.__local()
+        #self.E_prev = self.total_energy()
+        F = copy(self.q)
+        self.__local()
+        self.__global()
+        # Store latest result from Global step
+        #self.qLast = copy(self.q)
+        F = (self.q - F)[:, 0]
+
+        if self.curr_anderson_it == 0:
+            self.m_prev_G[:, 0] = -copy(self.q[:, 0])
+            self.m_prev_F[:, 0] = -copy(F)
+
+        else:
+            p = copy(self.col_idx)
+
+            self.m_prev_G[:, p] += self.q[:, 0]
+            self.m_prev_F[:, p] += F
+
+            self.lengths[p] = max(1e-14, np.linalg.norm(self.m_prev_F[:, p]))
+            self.m_prev_F[:, p] /= self.lengths[p]
+
+            mk = min(self.m_iterations, self.curr_anderson_it)
+
+            if mk == 1:
+                self.gamma[0] = np.array([0.0])
+                Fnorm = np.linalg.norm(self.m_prev_F[: , p])
+                self.AA[0, 0] = Fnorm ** 2.0
+                if Fnorm > 1e-14:
+                    self.gamma[0] = (self.m_prev_F[: , p] / Fnorm) @ (F / Fnorm)
+
+            else:
+                block = self.m_prev_F[:, p].T @ self.m_prev_F[:, 0:mk]
+                block = block.reshape(mk)
+                self.AA[p, 0:mk] = copy(block.T)
+                self.AA[0:mk, p] = copy(block)
+                Ch = cho_factor(self.AA[0:mk, 0:mk])
+                self.gamma = cho_solve(Ch, self.m_prev_F[:, 0:mk].T @ F)
+
+            self.q = self.q - (self.m_prev_G[:, 0:mk] @ (self.gamma / self.lengths[0:mk]).reshape(mk, 1))
+
+            self.col_idx = (self.col_idx + 1) % self.m_iterations
+            self.m_prev_F[:, self.col_idx] = -F
+            self.m_prev_G[:, self.col_idx] = -self.q[:, 0]
+
+        self.curr_anderson_it += 1
+
+        return False
+            
+
+    def step_A2FOM(self):
+        return self.A2FOM
+
+    def A2FOM(self):
+
+        pass

@@ -9,8 +9,8 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--sim", metavar="SIM", default="cloth", help="Simulation scene")
     #parser.add_argument("--dim", metavar="DIM", default=5, help="Object's dimensions")
-    parser.add_argument("--prof", metavar="PRF", default=0, help="Step rate at which the simulation will be profiled")
-    parser.add_argument("--method", metavar="MTH", default="FMS", help="Method", choices=['FMS', 'Newton', 'Jacobi'])
+    parser.add_argument("--prof", metavar="PRF", default=1, help="Step rate at which the simulation will be profiled")
+    parser.add_argument("--method", metavar="MTH", default="Anderson", help="Method", choices=['FMS', 'Newton', 'Jacobi'])
     args = parser.parse_args()
     try:
         newScene = Scene()
