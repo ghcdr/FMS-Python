@@ -59,6 +59,7 @@ class Solver:
     lengths             = None
     gamma               = None
 
+
     def __init__(self, positions, masses, springs, fixed, method, profiling_rate=0):
         """
         method: 'Newton' | 'FMS' | 'Jacobi'
@@ -100,9 +101,9 @@ class Solver:
         self.implemented = {
             'FMS':      self.step_LocalGlobal,
             'Jacobi':   self.step_Jacobi,
-            'Newton':   self.step_Newton,
+            #'Newton':   self.step_Newton,
             'Anderson': self.step_Anderson,
-            #'A2FOM':    self.step_A2FOM
+            'A2FOM':    self.step_A2FOM
         }
 
     def __del__(self):
@@ -140,7 +141,8 @@ class Solver:
         self.profile()
 
     def profile(self, triggered=False, all=False):
-        all = True
+        if self.profiling_rate > 0: 
+            all = True
         if (not triggered) and (self.profiling_rate == 0 or self.step_counter % self.profiling_rate != 0):
             return
         # Save state
@@ -399,8 +401,62 @@ class Solver:
             
 
     def step_A2FOM(self):
+        """Something other than this"""
+        assert(self.m_iterations > 1)
+        self.curr_anderson_it = 0
+        self.col_idx = 0
+        self.m_prev_G = np.zeros((self.ndim * self.m, self.m_iterations))
+        self.m_prev_F = np.zeros((self.ndim * self.m, self.m_iterations))
+        self.lengths = np.ones(self.m_iterations)
+        self.gamma = np.zeros((1))
+        self.AA = np.zeros((self.m_iterations, self.m_iterations))
+
         return self.A2FOM
 
     def A2FOM(self):
+        """Something other than this"""
+        F = copy(self.q)
+        self.__local()
+        self.__global()
+        F = (self.q - F)[:, 0]
 
-        pass
+        if self.curr_anderson_it == 0:
+            self.m_prev_G[:, 0] = -copy(self.q[:, 0])
+            self.m_prev_F[:, 0] = -copy(F)
+
+        else:
+            p = copy(self.col_idx)
+
+            self.m_prev_G[:, p] += self.q[:, 0]
+            self.m_prev_F[:, p] += F
+
+            mk = min(self.m_iterations, self.curr_anderson_it)
+
+            if mk == 1:
+                self.gamma[0] = np.array([0.0])
+                Fnorm = np.linalg.norm(self.m_prev_F[: , p])
+                self.AA[0, 0] = Fnorm ** 2.0
+                if Fnorm > 1e-14:
+                    self.gamma[0] = (self.m_prev_F[: , p] / Fnorm) @ (F / Fnorm)
+
+            else:
+                block = self.m_prev_F[:, p].T @ self.m_prev_F[:, 0:mk]
+                block = block.reshape(mk)
+                self.AA[p, 0:mk] = copy(block.T)
+                self.AA[0:mk, p] = copy(block)
+                print("\n")
+                print(self.AA)
+                if self.curr_anderson_it % self.m_iterations == 0:
+                    Ch = cho_factor(self.AA[0:mk, 0:mk])
+                    self.gamma = cho_solve(Ch, self.m_prev_F[:, 0:mk].T @ F)
+
+            self.col_idx = (self.col_idx + 1) % self.m_iterations
+            self.m_prev_F[:, self.col_idx] = -F
+            self.m_prev_G[:, self.col_idx] = -self.q[:, 0]
+
+        if self.curr_anderson_it % self.m_iterations != 0 and self.curr_anderson_it > self.m_iterations:
+            self.q = self.q - (self.m_prev_G[:, 0:mk] @ self.gamma.reshape(mk, 1))
+
+        self.curr_anderson_it += 1
+
+        return False
